@@ -8,9 +8,9 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
-from analyzer.file_reader import find_tf_files, read_tf_file
+from analyzer.file_reader import read_tf_files
 from analyzer.rule_checker import check_file, Finding
-from reports.markdown_reporter import write_report, generate_report
+from reports.markdown_reporter import write_report
 
 console = Console()
 
@@ -48,11 +48,14 @@ _SEVERITY_COLOR = {
 def main(path: str, output: str | None, llm: bool, model: str) -> None:
     """Analyze Terraform files for security issues, cost risks, and best-practice violations."""
 
-    # --- Discover files ---
+    # --- Discover and read files ---
     try:
-        tf_files = find_tf_files(path)
-    except (FileNotFoundError, ValueError) as exc:
+        tf_files = read_tf_files(path)
+    except FileNotFoundError as exc:
         console.print(f"[bold red]Error:[/] {exc}")
+        sys.exit(1)
+    except PermissionError as exc:
+        console.print(f"[bold red]Permission error:[/] {exc}")
         sys.exit(1)
 
     if not tf_files:
@@ -60,30 +63,31 @@ def main(path: str, output: str | None, llm: bool, model: str) -> None:
         sys.exit(0)
 
     console.print(f"\n[bold]terraform-security-reviewer[/]")
-    console.print(f"Scanning [cyan]{len(tf_files)}[/] file(s) under [cyan]{path}[/]\n")
+    console.print(f"Found [cyan]{len(tf_files)}[/] .tf file(s) under [cyan]{path}[/]:")
+    for name in tf_files:
+        console.print(f"  [dim]{name}[/]")
+    console.print()
 
     # --- Rule-based analysis ---
     all_findings: list[Finding] = []
-    for tf_file in tf_files:
-        content = read_tf_file(tf_file)
-        findings = check_file(tf_file, content)
+    for file_path, content in tf_files.items():
+        findings = check_file(Path(file_path), content)
         all_findings.extend(findings)
 
     # --- Optional LLM analysis ---
     if llm:
         from analyzer.llm_analyzer import analyze_with_llm
         console.print("[dim]Running LLM analysis via Claude API…[/]")
-        for tf_file in tf_files:
-            content = read_tf_file(tf_file)
-            llm_findings = analyze_with_llm(str(tf_file), content, model=model)
+        for file_path, content in tf_files.items():
+            llm_findings = analyze_with_llm(file_path, content, model=model)
             all_findings.extend(llm_findings)
 
     # --- Display results ---
-    _print_findings(all_findings, tf_files)
+    _print_findings(all_findings, list(tf_files.keys()))
 
     # --- Optional report ---
     if output:
-        write_report(all_findings, tf_files, output)
+        write_report(all_findings, [Path(p) for p in tf_files], output)
         console.print(f"\n[green]Report written to:[/] {output}")
 
     # Exit with non-zero code if any critical/high findings
@@ -91,7 +95,7 @@ def main(path: str, output: str | None, llm: bool, model: str) -> None:
         sys.exit(1)
 
 
-def _print_findings(findings: list[Finding], scanned_files: list[Path]) -> None:
+def _print_findings(findings: list[Finding], scanned_files: list[str]) -> None:
     if not findings:
         console.print("[bold green]No issues found.[/] Your Terraform looks clean.\n")
         return
