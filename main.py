@@ -1,0 +1,125 @@
+"""terraform-security-reviewer — CLI entry point."""
+
+import sys
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+from rich import box
+
+from analyzer.file_reader import find_tf_files, read_tf_file
+from analyzer.rule_checker import check_file, Finding
+from reports.markdown_reporter import write_report, generate_report
+
+console = Console()
+
+_SEVERITY_COLOR = {
+    "CRITICAL": "bold red",
+    "HIGH":     "red",
+    "MEDIUM":   "yellow",
+    "LOW":      "blue",
+    "INFO":     "dim",
+}
+
+
+@click.command()
+@click.option(
+    "--path", "-p",
+    required=True,
+    help="Path to a .tf file or directory to scan.",
+)
+@click.option(
+    "--output", "-o",
+    default=None,
+    help="Write a Markdown report to this file (optional).",
+)
+@click.option(
+    "--llm/--no-llm",
+    default=False,
+    help="Also run Claude LLM analysis (requires ANTHROPIC_API_KEY).",
+)
+@click.option(
+    "--model",
+    default="claude-sonnet-4-6",
+    show_default=True,
+    help="Claude model to use for LLM analysis.",
+)
+def main(path: str, output: str | None, llm: bool, model: str) -> None:
+    """Analyze Terraform files for security issues, cost risks, and best-practice violations."""
+
+    # --- Discover files ---
+    try:
+        tf_files = find_tf_files(path)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        sys.exit(1)
+
+    if not tf_files:
+        console.print("[yellow]No .tf files found at the given path.[/]")
+        sys.exit(0)
+
+    console.print(f"\n[bold]terraform-security-reviewer[/]")
+    console.print(f"Scanning [cyan]{len(tf_files)}[/] file(s) under [cyan]{path}[/]\n")
+
+    # --- Rule-based analysis ---
+    all_findings: list[Finding] = []
+    for tf_file in tf_files:
+        content = read_tf_file(tf_file)
+        findings = check_file(tf_file, content)
+        all_findings.extend(findings)
+
+    # --- Optional LLM analysis ---
+    if llm:
+        from analyzer.llm_analyzer import analyze_with_llm
+        console.print("[dim]Running LLM analysis via Claude API…[/]")
+        for tf_file in tf_files:
+            content = read_tf_file(tf_file)
+            llm_findings = analyze_with_llm(str(tf_file), content, model=model)
+            all_findings.extend(llm_findings)
+
+    # --- Display results ---
+    _print_findings(all_findings, tf_files)
+
+    # --- Optional report ---
+    if output:
+        write_report(all_findings, tf_files, output)
+        console.print(f"\n[green]Report written to:[/] {output}")
+
+    # Exit with non-zero code if any critical/high findings
+    if any(f.severity in ("CRITICAL", "HIGH") for f in all_findings):
+        sys.exit(1)
+
+
+def _print_findings(findings: list[Finding], scanned_files: list[Path]) -> None:
+    if not findings:
+        console.print("[bold green]No issues found.[/] Your Terraform looks clean.\n")
+        return
+
+    table = Table(box=box.SIMPLE_HEAD, show_lines=False)
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Rule", width=10)
+    table.add_column("Title")
+    table.add_column("Location")
+
+    _ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+    sorted_findings = sorted(findings, key=lambda f: _ORDER.get(f.severity, 99))
+
+    for f in sorted_findings:
+        color = _SEVERITY_COLOR.get(f.severity, "white")
+        loc = Path(f.file).name
+        if f.line:
+            loc += f":{f.line}"
+        table.add_row(
+            f"[{color}]{f.severity}[/]",
+            f.rule_id,
+            f.title,
+            loc,
+        )
+
+    console.print(table)
+    console.print(f"[bold]{len(findings)}[/] finding(s) across [bold]{len(scanned_files)}[/] file(s).\n")
+
+
+if __name__ == "__main__":
+    main()
