@@ -100,6 +100,80 @@ _MOCK_FINDINGS_AZURE = [
     },
 ]
 
+# Realistic mock findings for sample_bad.tf — used when ANTHROPIC_API_KEY is unset
+_MOCK_FINDINGS_AWS = [
+    {
+        "rule_id": "LLM-AWS-001",
+        "severity": "CRITICAL",
+        "title": "S3 bucket has no versioning — data loss on overwrite or delete",
+        "description": (
+            "aws_s3_bucket 'my_bucket' has no versioning block. Combined with acl='public-read', "
+            "any authenticated AWS user can overwrite or delete objects with no recovery path. "
+            "Enable versioning and add a lifecycle rule to expire old versions after 90 days."
+        ),
+        "line": 1,
+    },
+    {
+        "rule_id": "LLM-AWS-002",
+        "severity": "HIGH",
+        "title": "S3 bucket missing server-side encryption configuration",
+        "description": (
+            "aws_s3_bucket 'my_bucket' has no aws_s3_bucket_server_side_encryption_configuration. "
+            "Data at rest is stored unencrypted. Add SSE-S3 (AES256) at minimum, or SSE-KMS with a "
+            "customer-managed key for compliance with PCI-DSS and HIPAA workloads."
+        ),
+        "line": 1,
+    },
+    {
+        "rule_id": "LLM-AWS-003",
+        "severity": "HIGH",
+        "title": "RDS instance password hardcoded — rotation impossible without code change",
+        "description": (
+            "aws_db_instance 'mydb' sets password as a string literal. Beyond the immediate secret-leak "
+            "risk, hardcoded passwords cannot be rotated without a Terraform apply, creating a window "
+            "of exposure. Use aws_secretsmanager_secret + aws_db_instance manage_master_user_password=true "
+            "or source the value from SSM Parameter Store with a sensitive variable."
+        ),
+        "line": 25,
+    },
+    {
+        "rule_id": "LLM-AWS-004",
+        "severity": "MEDIUM",
+        "title": "Security group allows all TCP ports — missing egress restriction",
+        "description": (
+            "aws_security_group 'allow_all' opens ports 0-65535 inbound from 0.0.0.0/0 and has no "
+            "egress block, which defaults to allow-all outbound. This enables both inbound exploitation "
+            "and outbound data exfiltration. Restrict ingress to specific ports (443, 22 via bastion) "
+            "and add an explicit egress rule limited to known destinations."
+        ),
+        "line": 12,
+    },
+    {
+        "rule_id": "LLM-AWS-005",
+        "severity": "MEDIUM",
+        "title": "RDS instance missing deletion protection and backup retention",
+        "description": (
+            "aws_db_instance 'mydb' does not set deletion_protection=true or backup_retention_period. "
+            "A misconfigured destroy or accidental terraform apply could permanently delete the database "
+            "with no automated backup to restore from. Set deletion_protection=true and "
+            "backup_retention_period to at least 7."
+        ),
+        "line": 23,
+    },
+    {
+        "rule_id": "LLM-AWS-006",
+        "severity": "LOW",
+        "title": "No resource tags — cost attribution and compliance tracking impossible",
+        "description": (
+            "None of the four resources define a tags block. Without tags (Environment, Owner, CostCenter), "
+            "AWS Cost Explorer cannot attribute spend, and compliance tools (AWS Config, Security Hub) "
+            "cannot filter findings by team or workload. Add a default_tags block in the provider or "
+            "explicit tags on each resource."
+        ),
+        "line": None,
+    },
+]
+
 
 def analyze_with_llm(
     file_path: str,
@@ -152,11 +226,14 @@ def _load_mock_findings(file_path: str, content: str) -> list[Finding]:
     Selects the Azure mock set when the file looks like an Azure config,
     otherwise returns a generic empty list so the caller knows LLM was skipped.
     """
-    is_azure = any(
-        kw in content
-        for kw in ("azurerm_", "azurerm", "azure_")
-    )
-    template = _MOCK_FINDINGS_AZURE if is_azure else []
+    is_azure = any(kw in content for kw in ("azurerm_", "azure_"))
+    is_aws = any(kw in content for kw in ("aws_s3_", "aws_ec2", "aws_ebs_", "aws_security_group", "aws_db_", "aws_"))
+    if is_azure:
+        template = _MOCK_FINDINGS_AZURE
+    elif is_aws:
+        template = _MOCK_FINDINGS_AWS
+    else:
+        template = []
     return [
         Finding(
             rule_id=item["rule_id"],
