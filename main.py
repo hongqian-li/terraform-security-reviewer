@@ -76,8 +76,15 @@ def main(path: str, output: str | None, llm: bool, model: str) -> None:
 
     # --- Optional LLM analysis ---
     if llm:
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
         from analyzer.llm_analyzer import analyze_with_llm
-        console.print("[dim]Running LLM analysis via Claude API…[/]")
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key or api_key == "your-api-key-here":
+            console.print("[yellow]No ANTHROPIC_API_KEY set — running in mock-LLM mode (pre-written findings).[/]")
+        else:
+            console.print(f"[dim]Running LLM analysis via Claude API ({model})…[/]")
         for file_path, content in tf_files.items():
             llm_findings = analyze_with_llm(file_path, content, model=model)
             all_findings.extend(llm_findings)
