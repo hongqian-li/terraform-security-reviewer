@@ -2,7 +2,7 @@
 
 An AI-powered CLI tool for static analysis of Terraform infrastructure code. Combines rule-based detection with LLM analysis (Claude API) to identify security misconfigurations, GDPR-relevant exposures, and cost optimization opportunities. Outputs structured Markdown reports.
 
-> Designed around a finding from my master's thesis: deterministic, rule-based detection is more reliable than LLM-only approaches for compliance-critical use cases. The LLM layer acts as a second pass for complex patterns that rules can't catch.
+> Designed around a finding from my bachelor's thesis: deterministic, rule-based detection is more reliable than LLM-only approaches for compliance-critical use cases. The LLM layer acts as a second pass for complex patterns that rules can't catch.
 
 ## Features
 
